@@ -1,49 +1,282 @@
 /**
  * @file code.ts
  * @description Координатор плагина - обработка сообщений UI
- * @responsibilities Прием сообщений от UI, вызов сервисов, отправка ответов
- * @dependencies variablesService, treeBuilder, messages
- * @used-by Figma Plugin API
+ * @responsibilities Прием сообщений от UI, вызовы функций, отправка ответов
  */
 
-import { UIMessage, PluginMessage } from './types/messages';
-import { getCollections, getVariablesByCollection, batchSwapVariables } from './services/variablesService';
-import { buildTree, filterTree, updateNodeChecked, getCheckedVariableIds, toggleNodeCollapsed } from './utils/treeBuilder';
-import { TreeNode, VariableData } from './types/custom';
+// ===== ТИПЫ =====
+interface CollectionInfo {
+  id: string;
+  name: string;
+  variableCount: number;
+}
 
-// @ai-context: Основная точка входа плагина, координирует взаимодействие UI и backend
-// @ai-usage: Figma Plugin API вызывает этот файл при запуске плагина
+interface VariableData {
+  id: string;
+  name: string;
+  resolvedType: VariableResolvedDataType;
+  collectionId: string;
+  valuesByMode: Record<string, VariableValue>;
+}
 
-// Глобальное состояние
+type VariableResolvedDataType = 'BOOLEAN' | 'FLOAT' | 'STRING' | 'COLOR';
+type VariableValue = boolean | number | string | RGBA | VariableAlias;
+
+interface RGBA {
+  r: number;
+  g: number;
+  b: number;
+  a: number;
+}
+
+interface VariableAlias {
+  type: 'VARIABLE_ALIAS';
+  id: string;
+}
+
+interface TreeNode {
+  id: string;
+  name: string;
+  type: 'group' | 'variable';
+  children?: TreeNode[];
+  variableId?: string;
+  collapsed: boolean;
+  level: number;
+  checked: boolean;
+  indeterminate: boolean;
+}
+
+type UIMessage =
+  | { type: 'init' }
+  | { type: 'select-collection'; collectionId: string }
+  | { type: 'search'; query: string }
+  | { type: 'swap-collection'; variableIds: string[]; targetCollectionId: string }
+  | { type: 'toggle-group'; path: string };
+
+type PluginMessage =
+  | { type: 'init-data'; collections: CollectionInfo[]; defaultCollectionId: string }
+  | { type: 'tree-data'; tree: TreeNode[]; variables: VariableData[] }
+  | { type: 'error'; message: string }
+  | { type: 'success'; message: string };
+
+// ===== ГЛОБАЛЬНОЕ СОСТОЯНИЕ =====
 let currentTree: TreeNode[] = [];
 let currentVariables: VariableData[] = [];
 let currentCollectionId: string = '';
 
-// Показываем UI
-figma.showUI(__html__, { width: 400, height: 600 });
+const SEPARATOR = '/';
 
-// Обработка ошибок
+// ===== УТИЛИТЫ =====
+function buildTree(variables: VariableData[]): TreeNode[] {
+  const root: Map<string, TreeNode> = new Map();
+
+  for (const variable of variables) {
+    const parts = variable.name.split(SEPARATOR);
+    let currentLevel = root;
+    let currentPath = '';
+
+    parts.forEach((part, index) => {
+      currentPath += (currentPath ? SEPARATOR : '') + part;
+      const isLeaf = index === parts.length - 1;
+
+      if (!currentLevel.has(currentPath)) {
+        const node: TreeNode = {
+          id: currentPath,
+          name: part,
+          type: isLeaf ? 'variable' : 'group',
+          level: index,
+          collapsed: true,
+          checked: false,
+          indeterminate: false
+        };
+
+        if (isLeaf) {
+          node.variableId = variable.id;
+        } else {
+          node.children = [];
+        }
+
+        currentLevel.set(currentPath, node);
+      }
+
+      const currentNode = currentLevel.get(currentPath)!;
+
+      if (!isLeaf && currentNode.children) {
+        const nextLevelMap = new Map<string, TreeNode>();
+        for (const child of currentNode.children) {
+          nextLevelMap.set(child.id, child);
+        }
+        currentLevel = nextLevelMap;
+      }
+    });
+  }
+
+  return Array.from(root.values());
+}
+
+function filterTree(tree: TreeNode[], query: string): TreeNode[] {
+  if (!query.trim()) return tree;
+
+  const lowerQuery = query.toLowerCase();
+
+  function matchNode(node: TreeNode): TreeNode | null {
+    const nameMatches = node.id.toLowerCase().includes(lowerQuery);
+
+    if (node.type === 'variable') {
+      return nameMatches ? { ...node } : null;
+    }
+
+    const matchedChildren = node.children
+      ?.map(child => matchNode(child))
+      .filter((child): child is TreeNode => child !== null) || [];
+
+    if (matchedChildren.length > 0 || nameMatches) {
+      return {
+        ...node,
+        children: matchedChildren,
+        collapsed: false
+      };
+    }
+
+    return null;
+  }
+
+  return tree
+    .map(node => matchNode(node))
+    .filter((node): node is TreeNode => node !== null);
+}
+
+function toggleNodeCollapsed(tree: TreeNode[], nodeId: string): TreeNode[] {
+  return tree.map(node => {
+    if (node.id === nodeId) {
+      return { ...node, collapsed: !node.collapsed };
+    }
+    if (node.children) {
+      return { ...node, children: toggleNodeCollapsed(node.children, nodeId) };
+    }
+    return node;
+  });
+}
+
+// ===== СЕРВИСЫ =====
+async function getCollections(): Promise<CollectionInfo[]> {
+  const collections = await figma.variables.getLocalVariableCollectionsAsync();
+
+  return collections.map(collection => {
+    const variables = collection.variableIds.length;
+    return {
+      id: collection.id,
+      name: collection.name,
+      variableCount: variables
+    };
+  });
+}
+
+async function getVariablesByCollection(collectionId: string): Promise<VariableData[]> {
+  const collection = await figma.variables.getVariableCollectionByIdAsync(collectionId);
+  if (!collection) return [];
+
+  const variables: VariableData[] = [];
+
+  for (const varId of collection.variableIds) {
+    const variable = await figma.variables.getVariableByIdAsync(varId);
+    if (variable) {
+      variables.push({
+        id: variable.id,
+        name: variable.name,
+        resolvedType: variable.resolvedType,
+        collectionId: variable.variableCollectionId,
+        valuesByMode: variable.valuesByMode as Record<string, VariableValue>
+      });
+    }
+  }
+
+  return variables;
+}
+
+async function swapVariableCollection(
+  variableId: string,
+  targetCollectionId: string
+): Promise<void> {
+  const variable = await figma.variables.getVariableByIdAsync(variableId);
+  if (!variable) {
+    throw new Error(`Переменная ${variableId} не найдена`);
+  }
+
+  const targetCollection = await figma.variables.getVariableCollectionByIdAsync(targetCollectionId);
+  if (!targetCollection) {
+    throw new Error(`Коллекция ${targetCollectionId} не найдена`);
+  }
+
+  const existingVars = await getVariablesByCollection(targetCollectionId);
+  const duplicate = existingVars.find(v => v.name === variable.name);
+
+  if (duplicate) {
+    throw new Error(`Переменная "${variable.name}" уже существует в коллекции "${targetCollection.name}"`);
+  }
+
+  const newVariable = figma.variables.createVariable(
+    variable.name,
+    targetCollectionId,
+    variable.resolvedType
+  );
+
+  const sourceModes = variable.valuesByMode;
+  const targetModes = targetCollection.modes;
+  const targetModeId = targetModes[0].modeId;
+  const sourceValues = Object.values(sourceModes);
+
+  if (sourceValues.length > 0) {
+    newVariable.setValueForMode(targetModeId, sourceValues[0]);
+  }
+
+  variable.remove();
+}
+
+async function batchSwapVariables(
+  variableIds: string[],
+  targetCollectionId: string
+): Promise<{ success: string[]; failed: Array<{ id: string; error: string }> }> {
+  const results = {
+    success: [] as string[],
+    failed: [] as Array<{ id: string; error: string }>
+  };
+
+  for (const varId of variableIds) {
+    try {
+      await swapVariableCollection(varId, targetCollectionId);
+      results.success.push(varId);
+    } catch (error) {
+      results.failed.push({
+        id: varId,
+        error: error instanceof Error ? error.message : 'Неизвестная ошибка'
+      });
+    }
+  }
+
+  return results;
+}
+
+// ===== ОБРАБОТЧИКИ =====
 function handleError(error: unknown): void {
   const msg = error instanceof Error ? error.message : 'Неизвестная ошибка';
   console.error('[Plugin Error]', msg);
   figma.notify(`Ошибка: ${msg}`, { error: true });
-  
+
   const message: PluginMessage = { type: 'error', message: msg };
   figma.ui.postMessage(message);
 }
 
-// Инициализация плагина
 async function initialize(): Promise<void> {
   try {
     const collections = await getCollections();
-    
+
     if (collections.length === 0) {
       figma.notify('В файле нет коллекций переменных', { error: true });
       figma.closePlugin();
       return;
     }
 
-    // Выбираем первую коллекцию по умолчанию
     const defaultCollection = collections[0];
     currentCollectionId = defaultCollection.id;
 
@@ -52,17 +285,14 @@ async function initialize(): Promise<void> {
       collections,
       defaultCollectionId: defaultCollection.id
     };
-    
+
     figma.ui.postMessage(message);
-    
-    // Загружаем переменные первой коллекции
     await loadCollectionVariables(defaultCollection.id);
   } catch (error) {
     handleError(error);
   }
 }
 
-// Загрузка переменных коллекции
 async function loadCollectionVariables(collectionId: string): Promise<void> {
   try {
     currentCollectionId = collectionId;
@@ -74,14 +304,16 @@ async function loadCollectionVariables(collectionId: string): Promise<void> {
       tree: currentTree,
       variables: currentVariables
     };
-    
+
     figma.ui.postMessage(message);
   } catch (error) {
     handleError(error);
   }
 }
 
-// Обработка сообщений от UI
+// ===== ИНИЦИАЛИЗАЦИЯ =====
+figma.showUI(__html__, { width: 400, height: 600 });
+
 figma.ui.onmessage = async (msg: UIMessage) => {
   try {
     switch (msg.type) {
@@ -120,15 +352,14 @@ figma.ui.onmessage = async (msg: UIMessage) => {
         }
 
         const results = await batchSwapVariables(msg.variableIds, msg.targetCollectionId);
-        
+
         if (results.failed.length > 0) {
           const errorMessages = results.failed.map(f => f.error).join('\n');
           figma.notify(`Ошибки при переносе:\n${errorMessages}`, { error: true });
         }
-        
+
         if (results.success.length > 0) {
           figma.notify(`Успешно перенесено: ${results.success.length} переменных`);
-          // Перезагружаем текущую коллекцию
           await loadCollectionVariables(currentCollectionId);
         }
         break;

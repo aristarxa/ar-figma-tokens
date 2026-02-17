@@ -1,16 +1,12 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
-    "module": "commonjs",
-    "lib": ["ES2020"],
+    "target": "ES2017",
+    "lib": ["ES2017"],
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,
-    "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "node",
-    "resolveJsonModule": true,
     "typeRoots": ["./node_modules/@types", "./node_modules/@figma"]
   },
   "include": ["src/**/*"],
