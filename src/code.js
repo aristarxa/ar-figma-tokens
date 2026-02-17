@@ -12,29 +12,31 @@ var SEPARATOR = '/';
 
 // ===== UTILITIES =====
 function buildTree(variables) {
-  var root = new Map();
+  var nodeMap = {};
+  var rootNodes = [];
 
+  // Первый проход: создаем все узлы
   for (var i = 0; i < variables.length; i++) {
     var variable = variables[i];
     var parts = variable.name.split(SEPARATOR);
-    var currentLevel = root;
     var currentPath = '';
 
     for (var j = 0; j < parts.length; j++) {
       var part = parts[j];
-      var index = j;
+      var parentPath = currentPath;
       currentPath += (currentPath ? SEPARATOR : '') + part;
-      var isLeaf = index === parts.length - 1;
+      var isLeaf = j === parts.length - 1;
 
-      if (!currentLevel.has(currentPath)) {
+      if (!nodeMap[currentPath]) {
         var node = {
           id: currentPath,
           name: part,
           type: isLeaf ? 'variable' : 'group',
-          level: index,
+          level: j,
           collapsed: true,
           checked: false,
-          indeterminate: false
+          indeterminate: false,
+          parentPath: parentPath || null
         };
 
         if (isLeaf) {
@@ -43,23 +45,24 @@ function buildTree(variables) {
           node.children = [];
         }
 
-        currentLevel.set(currentPath, node);
-      }
-
-      var currentNode = currentLevel.get(currentPath);
-
-      if (!isLeaf && currentNode.children) {
-        var nextLevelMap = new Map();
-        for (var k = 0; k < currentNode.children.length; k++) {
-          var child = currentNode.children[k];
-          nextLevelMap.set(child.id, child);
-        }
-        currentLevel = nextLevelMap;
+        nodeMap[currentPath] = node;
       }
     }
   }
 
-  return Array.from(root.values());
+  // Второй проход: строим иерархию
+  for (var path in nodeMap) {
+    if (nodeMap.hasOwnProperty(path)) {
+      var node = nodeMap[path];
+      if (node.parentPath && nodeMap[node.parentPath]) {
+        nodeMap[node.parentPath].children.push(node);
+      } else {
+        rootNodes.push(node);
+      }
+    }
+  }
+
+  return rootNodes;
 }
 
 function filterTree(tree, query) {
@@ -265,6 +268,11 @@ function loadCollectionVariables(collectionId) {
       currentVariables = variables;
       currentTree = buildTree(currentVariables);
 
+      console.log('[Plugin] Tree built, root nodes:', currentTree.length);
+      for (var i = 0; i < currentTree.length; i++) {
+        console.log('[Plugin] Root node:', currentTree[i].name, 'children:', currentTree[i].children ? currentTree[i].children.length : 0);
+      }
+
       var message = {
         type: 'tree-data',
         tree: currentTree,
@@ -280,6 +288,8 @@ function loadCollectionVariables(collectionId) {
 figma.showUI(__html__, { width: 400, height: 600 });
 
 figma.ui.onmessage = function(msg) {
+  console.log('[Plugin] Received message:', msg.type);
+  
   switch (msg.type) {
     case 'init':
       initialize();
@@ -300,6 +310,7 @@ figma.ui.onmessage = function(msg) {
       break;
 
     case 'toggle-group':
+      console.log('[Plugin] Toggling group:', msg.path);
       currentTree = toggleNodeCollapsed(currentTree, msg.path);
       var toggleMessage = {
         type: 'tree-data',
