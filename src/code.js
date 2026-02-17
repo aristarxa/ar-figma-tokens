@@ -1,30 +1,33 @@
 /**
  * Token Manager Plugin for Figma
- * Pure JavaScript implementation without TypeScript
+ * Pure JavaScript ES5 compatible implementation
  */
 
 // ===== GLOBAL STATE =====
-let currentTree = [];
-let currentVariables = [];
-let currentCollectionId = '';
+var currentTree = [];
+var currentVariables = [];
+var currentCollectionId = '';
 
-const SEPARATOR = '/';
+var SEPARATOR = '/';
 
 // ===== UTILITIES =====
 function buildTree(variables) {
-  const root = new Map();
+  var root = new Map();
 
-  for (const variable of variables) {
-    const parts = variable.name.split(SEPARATOR);
-    let currentLevel = root;
-    let currentPath = '';
+  for (var i = 0; i < variables.length; i++) {
+    var variable = variables[i];
+    var parts = variable.name.split(SEPARATOR);
+    var currentLevel = root;
+    var currentPath = '';
 
-    parts.forEach((part, index) => {
+    for (var j = 0; j < parts.length; j++) {
+      var part = parts[j];
+      var index = j;
       currentPath += (currentPath ? SEPARATOR : '') + part;
-      const isLeaf = index === parts.length - 1;
+      var isLeaf = index === parts.length - 1;
 
       if (!currentLevel.has(currentPath)) {
-        const node = {
+        var node = {
           id: currentPath,
           name: part,
           type: isLeaf ? 'variable' : 'group',
@@ -43,16 +46,17 @@ function buildTree(variables) {
         currentLevel.set(currentPath, node);
       }
 
-      const currentNode = currentLevel.get(currentPath);
+      var currentNode = currentLevel.get(currentPath);
 
       if (!isLeaf && currentNode.children) {
-        const nextLevelMap = new Map();
-        for (const child of currentNode.children) {
+        var nextLevelMap = new Map();
+        for (var k = 0; k < currentNode.children.length; k++) {
+          var child = currentNode.children[k];
           nextLevelMap.set(child.id, child);
         }
         currentLevel = nextLevelMap;
       }
-    });
+    }
   }
 
   return Array.from(root.values());
@@ -61,249 +65,272 @@ function buildTree(variables) {
 function filterTree(tree, query) {
   if (!query.trim()) return tree;
 
-  const lowerQuery = query.toLowerCase();
+  var lowerQuery = query.toLowerCase();
 
   function matchNode(node) {
-    const nameMatches = node.id.toLowerCase().includes(lowerQuery);
+    var nameMatches = node.id.toLowerCase().includes(lowerQuery);
 
     if (node.type === 'variable') {
-      return nameMatches ? { ...node } : null;
+      return nameMatches ? Object.assign({}, node) : null;
     }
 
-    const matchedChildren = node.children
-      ? node.children.map(child => matchNode(child)).filter(child => child !== null)
-      : [];
+    var matchedChildren = [];
+    if (node.children) {
+      for (var i = 0; i < node.children.length; i++) {
+        var matched = matchNode(node.children[i]);
+        if (matched !== null) {
+          matchedChildren.push(matched);
+        }
+      }
+    }
 
     if (matchedChildren.length > 0 || nameMatches) {
-      return {
-        ...node,
+      return Object.assign({}, node, {
         children: matchedChildren,
         collapsed: false
-      };
+      });
     }
 
     return null;
   }
 
-  return tree.map(node => matchNode(node)).filter(node => node !== null);
+  var result = [];
+  for (var i = 0; i < tree.length; i++) {
+    var matched = matchNode(tree[i]);
+    if (matched !== null) {
+      result.push(matched);
+    }
+  }
+  return result;
 }
 
 function toggleNodeCollapsed(tree, nodeId) {
-  return tree.map(node => {
+  var result = [];
+  for (var i = 0; i < tree.length; i++) {
+    var node = tree[i];
     if (node.id === nodeId) {
-      return { ...node, collapsed: !node.collapsed };
+      result.push(Object.assign({}, node, { collapsed: !node.collapsed }));
+    } else if (node.children) {
+      result.push(Object.assign({}, node, {
+        children: toggleNodeCollapsed(node.children, nodeId)
+      }));
+    } else {
+      result.push(node);
     }
-    if (node.children) {
-      return { ...node, children: toggleNodeCollapsed(node.children, nodeId) };
-    }
-    return node;
-  });
+  }
+  return result;
 }
 
 // ===== SERVICES =====
-async function getCollections() {
-  const collections = await figma.variables.getLocalVariableCollectionsAsync();
-
-  return collections.map(collection => {
-    const variables = collection.variableIds.length;
-    return {
-      id: collection.id,
-      name: collection.name,
-      variableCount: variables
-    };
+function getCollections() {
+  return figma.variables.getLocalVariableCollectionsAsync().then(function(collections) {
+    return collections.map(function(collection) {
+      return {
+        id: collection.id,
+        name: collection.name,
+        variableCount: collection.variableIds.length
+      };
+    });
   });
 }
 
-async function getVariablesByCollection(collectionId) {
-  const collection = await figma.variables.getVariableCollectionByIdAsync(collectionId);
-  if (!collection) return [];
+function getVariablesByCollection(collectionId) {
+  return figma.variables.getVariableCollectionByIdAsync(collectionId).then(function(collection) {
+    if (!collection) return [];
 
-  const variables = [];
+    var promises = collection.variableIds.map(function(varId) {
+      return figma.variables.getVariableByIdAsync(varId);
+    });
 
-  for (const varId of collection.variableIds) {
-    const variable = await figma.variables.getVariableByIdAsync(varId);
-    if (variable) {
-      variables.push({
-        id: variable.id,
-        name: variable.name,
-        resolvedType: variable.resolvedType,
-        collectionId: variable.variableCollectionId,
-        valuesByMode: variable.valuesByMode
+    return Promise.all(promises).then(function(variables) {
+      return variables.filter(function(v) { return v !== null; }).map(function(variable) {
+        return {
+          id: variable.id,
+          name: variable.name,
+          resolvedType: variable.resolvedType,
+          collectionId: variable.variableCollectionId,
+          valuesByMode: variable.valuesByMode
+        };
       });
+    });
+  });
+}
+
+function swapVariableCollection(variableId, targetCollectionId) {
+  return figma.variables.getVariableByIdAsync(variableId).then(function(variable) {
+    if (!variable) {
+      throw new Error('Переменная ' + variableId + ' не найдена');
     }
-  }
 
-  return variables;
+    return figma.variables.getVariableCollectionByIdAsync(targetCollectionId).then(function(targetCollection) {
+      if (!targetCollection) {
+        throw new Error('Коллекция ' + targetCollectionId + ' не найдена');
+      }
+
+      return getVariablesByCollection(targetCollectionId).then(function(existingVars) {
+        var duplicate = existingVars.find(function(v) { return v.name === variable.name; });
+
+        if (duplicate) {
+          throw new Error('Переменная "' + variable.name + '" уже существует в коллекции "' + targetCollection.name + '"');
+        }
+
+        var newVariable = figma.variables.createVariable(
+          variable.name,
+          targetCollectionId,
+          variable.resolvedType
+        );
+
+        var sourceModes = variable.valuesByMode;
+        var targetModes = targetCollection.modes;
+        var targetModeId = targetModes[0].modeId;
+        var sourceValues = Object.values(sourceModes);
+
+        if (sourceValues.length > 0) {
+          newVariable.setValueForMode(targetModeId, sourceValues[0]);
+        }
+
+        variable.remove();
+      });
+    });
+  });
 }
 
-async function swapVariableCollection(variableId, targetCollectionId) {
-  const variable = await figma.variables.getVariableByIdAsync(variableId);
-  if (!variable) {
-    throw new Error(`Переменная ${variableId} не найдена`);
-  }
-
-  const targetCollection = await figma.variables.getVariableCollectionByIdAsync(targetCollectionId);
-  if (!targetCollection) {
-    throw new Error(`Коллекция ${targetCollectionId} не найдена`);
-  }
-
-  const existingVars = await getVariablesByCollection(targetCollectionId);
-  const duplicate = existingVars.find(v => v.name === variable.name);
-
-  if (duplicate) {
-    throw new Error(`Переменная "${variable.name}" уже существует в коллекции "${targetCollection.name}"`);
-  }
-
-  const newVariable = figma.variables.createVariable(
-    variable.name,
-    targetCollectionId,
-    variable.resolvedType
-  );
-
-  const sourceModes = variable.valuesByMode;
-  const targetModes = targetCollection.modes;
-  const targetModeId = targetModes[0].modeId;
-  const sourceValues = Object.values(sourceModes);
-
-  if (sourceValues.length > 0) {
-    newVariable.setValueForMode(targetModeId, sourceValues[0]);
-  }
-
-  variable.remove();
-}
-
-async function batchSwapVariables(variableIds, targetCollectionId) {
-  const results = {
+function batchSwapVariables(variableIds, targetCollectionId) {
+  var results = {
     success: [],
     failed: []
   };
 
-  for (const varId of variableIds) {
-    try {
-      await swapVariableCollection(varId, targetCollectionId);
-      results.success.push(varId);
-    } catch (error) {
-      results.failed.push({
-        id: varId,
-        error: error instanceof Error ? error.message : 'Неизвестная ошибка'
-      });
+  function processNext(index) {
+    if (index >= variableIds.length) {
+      return Promise.resolve(results);
     }
+
+    var varId = variableIds[index];
+    return swapVariableCollection(varId, targetCollectionId)
+      .then(function() {
+        results.success.push(varId);
+        return processNext(index + 1);
+      })
+      .catch(function(error) {
+        results.failed.push({
+          id: varId,
+          error: error instanceof Error ? error.message : 'Неизвестная ошибка'
+        });
+        return processNext(index + 1);
+      });
   }
 
-  return results;
+  return processNext(0);
 }
 
 // ===== HANDLERS =====
 function handleError(error) {
-  const msg = error instanceof Error ? error.message : 'Неизвестная ошибка';
+  var msg = error instanceof Error ? error.message : 'Неизвестная ошибка';
   console.error('[Plugin Error]', msg);
-  figma.notify(`Ошибка: ${msg}`, { error: true });
+  figma.notify('Ошибка: ' + msg, { error: true });
 
-  const message = { type: 'error', message: msg };
+  var message = { type: 'error', message: msg };
   figma.ui.postMessage(message);
 }
 
-async function initialize() {
-  try {
-    const collections = await getCollections();
+function initialize() {
+  getCollections()
+    .then(function(collections) {
+      if (collections.length === 0) {
+        figma.notify('В файле нет коллекций переменных', { error: true });
+        figma.closePlugin();
+        return;
+      }
 
-    if (collections.length === 0) {
-      figma.notify('В файле нет коллекций переменных', { error: true });
-      figma.closePlugin();
-      return;
-    }
+      var defaultCollection = collections[0];
+      currentCollectionId = defaultCollection.id;
 
-    const defaultCollection = collections[0];
-    currentCollectionId = defaultCollection.id;
+      var message = {
+        type: 'init-data',
+        collections: collections,
+        defaultCollectionId: defaultCollection.id
+      };
 
-    const message = {
-      type: 'init-data',
-      collections,
-      defaultCollectionId: defaultCollection.id
-    };
-
-    figma.ui.postMessage(message);
-    await loadCollectionVariables(defaultCollection.id);
-  } catch (error) {
-    handleError(error);
-  }
+      figma.ui.postMessage(message);
+      return loadCollectionVariables(defaultCollection.id);
+    })
+    .catch(handleError);
 }
 
-async function loadCollectionVariables(collectionId) {
-  try {
-    currentCollectionId = collectionId;
-    currentVariables = await getVariablesByCollection(collectionId);
-    currentTree = buildTree(currentVariables);
+function loadCollectionVariables(collectionId) {
+  currentCollectionId = collectionId;
+  return getVariablesByCollection(collectionId)
+    .then(function(variables) {
+      currentVariables = variables;
+      currentTree = buildTree(currentVariables);
 
-    const message = {
-      type: 'tree-data',
-      tree: currentTree,
-      variables: currentVariables
-    };
+      var message = {
+        type: 'tree-data',
+        tree: currentTree,
+        variables: currentVariables
+      };
 
-    figma.ui.postMessage(message);
-  } catch (error) {
-    handleError(error);
-  }
+      figma.ui.postMessage(message);
+    })
+    .catch(handleError);
 }
 
 // ===== INITIALIZATION =====
 figma.showUI(__html__, { width: 400, height: 600 });
 
-figma.ui.onmessage = async (msg) => {
-  try {
-    switch (msg.type) {
-      case 'init':
-        await initialize();
-        break;
+figma.ui.onmessage = function(msg) {
+  switch (msg.type) {
+    case 'init':
+      initialize();
+      break;
 
-      case 'select-collection':
-        await loadCollectionVariables(msg.collectionId);
-        break;
+    case 'select-collection':
+      loadCollectionVariables(msg.collectionId);
+      break;
 
-      case 'search':
-        const filteredTree = filterTree(currentTree, msg.query);
-        const message = {
-          type: 'tree-data',
-          tree: filteredTree,
-          variables: currentVariables
-        };
-        figma.ui.postMessage(message);
-        break;
+    case 'search':
+      var filteredTree = filterTree(currentTree, msg.query);
+      var message = {
+        type: 'tree-data',
+        tree: filteredTree,
+        variables: currentVariables
+      };
+      figma.ui.postMessage(message);
+      break;
 
-      case 'toggle-group':
-        currentTree = toggleNodeCollapsed(currentTree, msg.path);
-        const toggleMessage = {
-          type: 'tree-data',
-          tree: currentTree,
-          variables: currentVariables
-        };
-        figma.ui.postMessage(toggleMessage);
-        break;
+    case 'toggle-group':
+      currentTree = toggleNodeCollapsed(currentTree, msg.path);
+      var toggleMessage = {
+        type: 'tree-data',
+        tree: currentTree,
+        variables: currentVariables
+      };
+      figma.ui.postMessage(toggleMessage);
+      break;
 
-      case 'swap-collection':
-        if (msg.variableIds.length === 0) {
-          figma.notify('Выберите переменные для переноса', { error: true });
-          return;
-        }
+    case 'swap-collection':
+      if (msg.variableIds.length === 0) {
+        figma.notify('Выберите переменные для переноса', { error: true });
+        return;
+      }
 
-        const results = await batchSwapVariables(msg.variableIds, msg.targetCollectionId);
+      batchSwapVariables(msg.variableIds, msg.targetCollectionId)
+        .then(function(results) {
+          if (results.failed.length > 0) {
+            var errorMessages = results.failed.map(function(f) { return f.error; }).join('\n');
+            figma.notify('Ошибки при переносе:\n' + errorMessages, { error: true });
+          }
 
-        if (results.failed.length > 0) {
-          const errorMessages = results.failed.map(f => f.error).join('\n');
-          figma.notify(`Ошибки при переносе:\n${errorMessages}`, { error: true });
-        }
+          if (results.success.length > 0) {
+            figma.notify('Успешно перенесено: ' + results.success.length + ' переменных');
+            return loadCollectionVariables(currentCollectionId);
+          }
+        })
+        .catch(handleError);
+      break;
 
-        if (results.success.length > 0) {
-          figma.notify(`Успешно перенесено: ${results.success.length} переменных`);
-          await loadCollectionVariables(currentCollectionId);
-        }
-        break;
-
-      default:
-        console.warn('Неизвестный тип сообщения:', msg);
-    }
-  } catch (error) {
-    handleError(error);
+    default:
+      console.warn('Неизвестный тип сообщения:', msg);
   }
 };
