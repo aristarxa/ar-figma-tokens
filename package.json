@@ -3,13 +3,10 @@
   "version": "1.0.0",
   "description": "Figma plugin for managing design tokens/variables",
   "scripts": {
-    "build": "npm run build-js && npm run copy-html",
-    "build-js": "node build.js",
-    "copy-html": "cp src/ui.html dist/ui.html",
-    "watch": "npm run build"
+    "build": "echo 'No build needed - using plain JavaScript'",
+    "dev": "echo 'Plugin ready for development'"
   },
   "devDependencies": {
-    "@figma/plugin-typings": "^1.90.0",
-    "typescript": "^5.3.0"
+    "@figma/plugin-typings": "^1.90.0"
   }
 }
