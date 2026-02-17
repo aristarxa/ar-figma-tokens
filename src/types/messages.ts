@@ -1,43 +1,25 @@
 /**
  * @file messages.ts
- * @description Типы сообщений для коммуникации между UI и плагином
- * @responsibilities Определение всех типов сообщений UI↔Plugin
- * @dependencies Нет
+ * @description Типы всех сообщений между UI и Plugin
+ * @responsibilities Централизованное хранение типов сообщений
+ * @dependencies Нет внешних зависимостей
  * @used-by code.ts, ui.html
  */
 
-// Типы переменных Figma
-export type VariableResolvedType = 'COLOR' | 'FLOAT' | 'STRING' | 'BOOLEAN';
+import { TreeNode, VariableData, CollectionInfo } from './custom';
 
-// Узел дерева токенов
-export interface TreeNode {
-  id: string; // для группы: path, для токена: variable.id
-  name: string; // имя сегмента (не полный path)
-  fullName: string; // полное имя токена
-  type: 'group' | 'token';
-  children?: TreeNode[];
-  variableType?: VariableResolvedType;
-  collectionId?: string;
-}
-
-// Информация о коллекции
-export interface CollectionInfo {
-  id: string;
-  name: string;
-  variableCount: number;
-}
-
-// Сообщения от UI к плагину
+// Сообщения от UI к Plugin
 export type UIMessage =
   | { type: 'init' }
-  | { type: 'load-collection', collectionId: string }
-  | { type: 'search', query: string }
-  | { type: 'swap-collection', variableIds: string[], targetCollectionId: string };
+  | { type: 'select-collection'; collectionId: string }
+  | { type: 'search'; query: string }
+  | { type: 'swap-collection'; variableIds: string[]; targetCollectionId: string }
+  | { type: 'toggle-group'; path: string };
 
-// Сообщения от плагина к UI
+// Сообщения от Plugin к UI
 export type PluginMessage =
-  | { type: 'collections-loaded', collections: CollectionInfo[] }
-  | { type: 'tokens-loaded', tree: TreeNode[] }
-  | { type: 'swap-complete', movedCount: number }
-  | { type: 'error', message: string }
-  | { type: 'progress', current: number, total: number };
+  | { type: 'init-data'; collections: CollectionInfo[]; defaultCollectionId: string }
+  | { type: 'tree-data'; tree: TreeNode[]; variables: VariableData[] }
+  | { type: 'error'; message: string }
+  | { type: 'success'; message: string }
+  | { type: 'progress'; current: number; total: number };

@@ -1,13 +1,12 @@
 {
   "name": "ar-figma-tokens",
   "version": "1.0.0",
-  "description": "Плагин для управления токенами (variables) в Figma",
+  "description": "Figma plugin for managing design tokens/variables",
   "scripts": {
-    "build": "tsc && cp src/ui.html dist/",
+    "build": "tsc && npm run copy-html",
+    "copy-html": "cp src/ui.html dist/ui.html",
     "watch": "tsc --watch"
   },
-  "author": "aristarxa",
-  "license": "MIT",
   "devDependencies": {
     "@figma/plugin-typings": "^1.90.0",
     "typescript": "^5.3.0"
