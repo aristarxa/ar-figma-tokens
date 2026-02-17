@@ -12,17 +12,32 @@ var SEPARATOR = '/';
 
 // ===== UTILITIES =====
 function buildTree(variables) {
+  console.log('[Plugin] Building tree for', variables.length, 'variables');
   var nodeMap = {};
   var rootNodes = [];
 
   // Первый проход: создаем все узлы
   for (var i = 0; i < variables.length; i++) {
     var variable = variables[i];
+    
+    // Защита от переменных без имени
+    if (!variable.name || typeof variable.name !== 'string') {
+      console.warn('[Plugin] Variable without name:', variable.id);
+      continue;
+    }
+    
     var parts = variable.name.split(SEPARATOR);
     var currentPath = '';
 
     for (var j = 0; j < parts.length; j++) {
       var part = parts[j];
+      
+      // Защита от пустых частей
+      if (!part || part.trim() === '') {
+        console.warn('[Plugin] Empty part in variable name:', variable.name);
+        continue;
+      }
+      
       var parentPath = currentPath;
       currentPath += (currentPath ? SEPARATOR : '') + part;
       var isLeaf = j === parts.length - 1;
@@ -54,14 +69,29 @@ function buildTree(variables) {
   for (var path in nodeMap) {
     if (nodeMap.hasOwnProperty(path)) {
       var node = nodeMap[path];
+      
       if (node.parentPath && nodeMap[node.parentPath]) {
-        nodeMap[node.parentPath].children.push(node);
+        var parent = nodeMap[node.parentPath];
+        
+        // Защита: если у родителя нет массива children, создаем его
+        if (!parent.children) {
+          console.warn('[Plugin] Parent node has no children array:', node.parentPath);
+          parent.children = [];
+        }
+        
+        parent.children.push(node);
+      } else if (!node.parentPath) {
+        // Корневой узел
+        rootNodes.push(node);
       } else {
+        // Родитель не найден - делаем корневым
+        console.warn('[Plugin] Parent not found for:', path, 'parent:', node.parentPath);
         rootNodes.push(node);
       }
     }
   }
 
+  console.log('[Plugin] Tree built successfully, root nodes:', rootNodes.length);
   return rootNodes;
 }
 
@@ -138,15 +168,32 @@ function getCollections() {
 }
 
 function getVariablesByCollection(collectionId) {
+  console.log('[Plugin] Loading variables for collection:', collectionId);
+  
   return figma.variables.getVariableCollectionByIdAsync(collectionId).then(function(collection) {
-    if (!collection) return [];
+    if (!collection) {
+      console.error('[Plugin] Collection not found:', collectionId);
+      return [];
+    }
+
+    console.log('[Plugin] Collection found:', collection.name, 'variables:', collection.variableIds.length);
 
     var promises = collection.variableIds.map(function(varId) {
       return figma.variables.getVariableByIdAsync(varId);
     });
 
     return Promise.all(promises).then(function(variables) {
-      return variables.filter(function(v) { return v !== null; }).map(function(variable) {
+      var validVariables = variables.filter(function(v) { 
+        if (!v) {
+          console.warn('[Plugin] Variable is null');
+          return false;
+        }
+        if (!v.name) {
+          console.warn('[Plugin] Variable has no name:', v.id);
+          return false;
+        }
+        return true;
+      }).map(function(variable) {
         return {
           id: variable.id,
           name: variable.name,
@@ -155,6 +202,9 @@ function getVariablesByCollection(collectionId) {
           valuesByMode: variable.valuesByMode
         };
       });
+      
+      console.log('[Plugin] Valid variables:', validVariables.length);
+      return validVariables;
     });
   });
 }
@@ -231,6 +281,7 @@ function batchSwapVariables(variableIds, targetCollectionId) {
 function handleError(error) {
   var msg = error instanceof Error ? error.message : 'Неизвестная ошибка';
   console.error('[Plugin Error]', msg);
+  console.error('[Plugin Error] Stack:', error.stack || 'no stack');
   figma.notify('Ошибка: ' + msg, { error: true });
 
   var message = { type: 'error', message: msg };
