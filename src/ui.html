@@ -161,7 +161,6 @@
       color: #999999;
     }
 
-    /* Скроллбар */
     .tree-container::-webkit-scrollbar {
       width: 8px;
     }
@@ -205,26 +204,22 @@
   </div>
 
   <script>
-    // Состояние
-    let currentTree = [];
-    let currentVariables = [];
-    let collections = [];
-    let selectedCollectionId = '';
+    var currentTree = [];
+    var currentVariables = [];
+    var collections = [];
+    var selectedCollectionId = '';
 
-    // Элементы DOM
-    const collectionSelect = document.getElementById('collection-select');
-    const searchInput = document.getElementById('search-input');
-    const treeContainer = document.getElementById('tree-container');
-    const swapBtn = document.getElementById('swap-btn');
+    var collectionSelect = document.getElementById('collection-select');
+    var searchInput = document.getElementById('search-input');
+    var treeContainer = document.getElementById('tree-container');
+    var swapBtn = document.getElementById('swap-btn');
 
-    // Инициализация
-    window.onload = () => {
+    window.onload = function() {
       parent.postMessage({ pluginMessage: { type: 'init' } }, '*');
     };
 
-    // Обработка сообщений от плагина
-    window.onmessage = (event) => {
-      const msg = event.data.pluginMessage;
+    window.onmessage = function(event) {
+      var msg = event.data.pluginMessage;
       if (!msg) return;
 
       switch (msg.type) {
@@ -251,16 +246,13 @@
       }
     };
 
-    // Рендер селектора коллекций
     function renderCollectionSelector() {
-      collectionSelect.innerHTML = collections.map(c => 
-        `<option value="${c.id}" ${c.id === selectedCollectionId ? 'selected' : ''}>
-          ${c.name} (${c.variableCount})
-        </option>`
-      ).join('');
+      collectionSelect.innerHTML = collections.map(function(c) {
+        var selected = c.id === selectedCollectionId ? 'selected' : '';
+        return '<option value="' + c.id + '" ' + selected + '>' + c.name + ' (' + c.variableCount + ')</option>';
+      }).join('');
     }
 
-    // Рендер дерева
     function renderTree() {
       if (currentTree.length === 0) {
         treeContainer.innerHTML = '<div class="empty-state">Нет переменных</div>';
@@ -268,122 +260,128 @@
       }
 
       treeContainer.innerHTML = '';
-      currentTree.forEach(node => renderNode(node, treeContainer));
+      for (var i = 0; i < currentTree.length; i++) {
+        renderNode(currentTree[i], treeContainer);
+      }
     }
 
-    // Рендер узла дерева
     function renderNode(node, container) {
-      const div = document.createElement('div');
+      var div = document.createElement('div');
       div.className = 'tree-node';
+      div.setAttribute('data-node-id', node.id);
 
-      // Отступ
-      for (let i = 0; i < node.level; i++) {
-        const indent = document.createElement('span');
+      for (var i = 0; i < node.level; i++) {
+        var indent = document.createElement('span');
         indent.className = 'tree-node-indent';
         div.appendChild(indent);
       }
 
-      // Иконка схлопывания (только для групп)
-      const toggle = document.createElement('span');
+      var toggle = document.createElement('span');
       toggle.className = 'tree-node-toggle';
       if (node.type === 'group') {
         toggle.textContent = node.collapsed ? '▶' : '▼';
-        toggle.onclick = (e) => {
+        toggle.onclick = function(e) {
           e.stopPropagation();
           parent.postMessage({ pluginMessage: { type: 'toggle-group', path: node.id } }, '*');
         };
       }
       div.appendChild(toggle);
 
-      // Чекбокс
-      const checkbox = document.createElement('input');
+      var checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
       checkbox.className = 'tree-node-checkbox';
       checkbox.checked = node.checked;
       checkbox.indeterminate = node.indeterminate;
-      checkbox.onclick = (e) => {
+      checkbox.onclick = function(e) {
         e.stopPropagation();
         toggleNodeCheck(node.id, !node.checked);
       };
       div.appendChild(checkbox);
 
-      // Иконка типа
       if (node.type === 'variable') {
-        const variable = currentVariables.find(v => v.id === node.variableId);
+        var variable = currentVariables.find(function(v) { return v.id === node.variableId; });
         if (variable) {
-          const icon = document.createElement('span');
+          var icon = document.createElement('span');
           icon.className = 'tree-node-icon';
           icon.textContent = getTypeIcon(variable.resolvedType);
           div.appendChild(icon);
         }
       } else {
-        const icon = document.createElement('span');
+        var icon = document.createElement('span');
         icon.className = 'tree-node-icon';
         icon.textContent = '📁';
         div.appendChild(icon);
       }
 
-      // Название
-      const label = document.createElement('span');
-      label.className = `tree-node-label tree-node-${node.type}`;
+      var label = document.createElement('span');
+      label.className = 'tree-node-label tree-node-' + node.type;
       label.textContent = node.name;
       div.appendChild(label);
 
       container.appendChild(div);
 
-      // Рендер детей (если не схлопнуто)
       if (node.type === 'group' && !node.collapsed && node.children) {
-        node.children.forEach(child => renderNode(child, container));
+        for (var j = 0; j < node.children.length; j++) {
+          renderNode(node.children[j], container);
+        }
       }
     }
 
-    // Переключение чекбокса
     function toggleNodeCheck(nodeId, checked) {
       currentTree = updateTreeNodeChecked(currentTree, nodeId, checked);
       renderTree();
       updateSwapButton();
     }
 
-    // Обновление чекбокса в дереве
     function updateTreeNodeChecked(tree, nodeId, checked) {
-      return tree.map(node => {
+      var result = [];
+      for (var i = 0; i < tree.length; i++) {
+        var node = tree[i];
         if (node.id === nodeId) {
-          const updated = { ...node, checked, indeterminate: false };
+          var updated = Object.assign({}, node, { checked: checked, indeterminate: false });
           if (node.children) {
             updated.children = updateAllChildren(node.children, checked);
           }
-          return updated;
-        }
-
-        if (node.children) {
-          const updatedChildren = updateTreeNodeChecked(node.children, nodeId, checked);
-          const checkedCount = updatedChildren.filter(c => c.checked).length;
-          const indeterminateCount = updatedChildren.filter(c => c.indeterminate).length;
+          result.push(updated);
+        } else if (node.children) {
+          var updatedChildren = updateTreeNodeChecked(node.children, nodeId, checked);
+          var checkedCount = 0;
+          var indeterminateCount = 0;
           
-          return {
-            ...node,
+          for (var j = 0; j < updatedChildren.length; j++) {
+            if (updatedChildren[j].checked) checkedCount++;
+            if (updatedChildren[j].indeterminate) indeterminateCount++;
+          }
+          
+          var updated = Object.assign({}, node, {
             children: updatedChildren,
             checked: checkedCount === updatedChildren.length,
             indeterminate: (checkedCount > 0 && checkedCount < updatedChildren.length) || indeterminateCount > 0
-          };
+          });
+          result.push(updated);
+        } else {
+          result.push(node);
         }
-
-        return node;
-      });
+      }
+      return result;
     }
 
     function updateAllChildren(children, checked) {
-      return children.map(child => ({
-        ...child,
-        checked,
-        indeterminate: false,
-        children: child.children ? updateAllChildren(child.children, checked) : undefined
-      }));
+      var result = [];
+      for (var i = 0; i < children.length; i++) {
+        var child = children[i];
+        var updated = Object.assign({}, child, {
+          checked: checked,
+          indeterminate: false,
+          children: child.children ? updateAllChildren(child.children, checked) : undefined
+        });
+        result.push(updated);
+      }
+      return result;
     }
 
-    // Получение иконки типа
     function getTypeIcon(type) {
-      const icons = {
+      var icons = {
         'COLOR': '🎨',
         'FLOAT': '🔢',
         'STRING': '📝',
@@ -392,12 +390,12 @@
       return icons[type] || '•';
     }
 
-    // Сбор выбранных ID
     function getCheckedVariableIds(tree) {
-      const ids = [];
+      var ids = [];
       
       function traverse(nodes) {
-        for (const node of nodes) {
+        for (var i = 0; i < nodes.length; i++) {
+          var node = nodes[i];
           if (node.checked && node.type === 'variable' && node.variableId) {
             ids.push(node.variableId);
           }
@@ -411,17 +409,15 @@
       return ids;
     }
 
-    // Обновление кнопки Swap
     function updateSwapButton() {
-      const checkedIds = getCheckedVariableIds(currentTree);
+      var checkedIds = getCheckedVariableIds(currentTree);
       swapBtn.disabled = checkedIds.length === 0;
       swapBtn.textContent = checkedIds.length > 0 
-        ? `Swap Collection (${checkedIds.length})`
+        ? 'Swap Collection (' + checkedIds.length + ')'
         : 'Swap Collection';
     }
 
-    // Обработчики событий
-    collectionSelect.onchange = () => {
+    collectionSelect.onchange = function() {
       selectedCollectionId = collectionSelect.value;
       parent.postMessage({ 
         pluginMessage: { 
@@ -431,7 +427,7 @@
       }, '*');
     };
 
-    searchInput.oninput = () => {
+    searchInput.oninput = function() {
       parent.postMessage({ 
         pluginMessage: { 
           type: 'search', 
@@ -440,41 +436,43 @@
       }, '*');
     };
 
-    swapBtn.onclick = () => {
-      const checkedIds = getCheckedVariableIds(currentTree);
+    swapBtn.onclick = function() {
+      var checkedIds = getCheckedVariableIds(currentTree);
       if (checkedIds.length === 0) return;
 
-      // Выбор целевой коллекции
-      const targetCollections = collections.filter(c => c.id !== selectedCollectionId);
+      var targetCollections = collections.filter(function(c) { 
+        return c.id !== selectedCollectionId; 
+      });
+      
       if (targetCollections.length === 0) {
         alert('Нет других коллекций для переноса');
         return;
       }
 
-      const options = targetCollections.map((c, i) => 
-        `${i + 1}. ${c.name} (${c.variableCount} переменных)`
-      ).join('\n');
+      var options = targetCollections.map(function(c, i) {
+        return (i + 1) + '. ' + c.name + ' (' + c.variableCount + ' переменных)';
+      }).join('\n');
 
-      const choice = prompt(
-        `Выберите коллекцию для переноса (введите номер):\n${options}`,
+      var choice = prompt(
+        'Выберите коллекцию для переноса (введите номер):\n' + options,
         '1'
       );
 
       if (!choice) return;
 
-      const index = parseInt(choice) - 1;
+      var index = parseInt(choice) - 1;
       if (index < 0 || index >= targetCollections.length) {
         alert('Неверный номер коллекции');
         return;
       }
 
-      const targetCollectionId = targetCollections[index].id;
+      var targetCollectionId = targetCollections[index].id;
       
       parent.postMessage({ 
         pluginMessage: { 
           type: 'swap-collection',
           variableIds: checkedIds,
-          targetCollectionId
+          targetCollectionId: targetCollectionId
         } 
       }, '*');
     };
