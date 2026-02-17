@@ -214,7 +214,10 @@
     var treeContainer = document.getElementById('tree-container');
     var swapBtn = document.getElementById('swap-btn');
 
+    console.log('[TokenManager] UI initialized');
+
     window.onload = function() {
+      console.log('[TokenManager] Sending init message');
       parent.postMessage({ pluginMessage: { type: 'init' } }, '*');
     };
 
@@ -222,16 +225,20 @@
       var msg = event.data.pluginMessage;
       if (!msg) return;
 
+      console.log('[TokenManager] Received message:', msg.type);
+
       switch (msg.type) {
         case 'init-data':
           collections = msg.collections;
           selectedCollectionId = msg.defaultCollectionId;
+          console.log('[TokenManager] Collections loaded:', collections.length);
           renderCollectionSelector();
           break;
 
         case 'tree-data':
           currentTree = msg.tree;
           currentVariables = msg.variables;
+          console.log('[TokenManager] Tree data received, nodes:', currentTree.length, 'variables:', currentVariables.length);
           renderTree();
           updateSwapButton();
           break;
@@ -254,6 +261,7 @@
     }
 
     function renderTree() {
+      console.log('[TokenManager] Rendering tree...');
       if (currentTree.length === 0) {
         treeContainer.innerHTML = '<div class="empty-state">Нет переменных</div>';
         return;
@@ -263,12 +271,12 @@
       for (var i = 0; i < currentTree.length; i++) {
         renderNode(currentTree[i], treeContainer);
       }
+      console.log('[TokenManager] Tree rendered');
     }
 
     function renderNode(node, container) {
       var div = document.createElement('div');
       div.className = 'tree-node';
-      div.setAttribute('data-node-id', node.id);
 
       for (var i = 0; i < node.level; i++) {
         var indent = document.createElement('span');
@@ -280,10 +288,13 @@
       toggle.className = 'tree-node-toggle';
       if (node.type === 'group') {
         toggle.textContent = node.collapsed ? '▶' : '▼';
-        toggle.onclick = function(e) {
-          e.stopPropagation();
-          parent.postMessage({ pluginMessage: { type: 'toggle-group', path: node.id } }, '*');
-        };
+        toggle.onclick = (function(nodeId) {
+          return function(e) {
+            e.stopPropagation();
+            console.log('[TokenManager] Toggle clicked for:', nodeId);
+            parent.postMessage({ pluginMessage: { type: 'toggle-group', path: nodeId } }, '*');
+          };
+        })(node.id);
       }
       div.appendChild(toggle);
 
@@ -292,10 +303,13 @@
       checkbox.className = 'tree-node-checkbox';
       checkbox.checked = node.checked;
       checkbox.indeterminate = node.indeterminate;
-      checkbox.onclick = function(e) {
-        e.stopPropagation();
-        toggleNodeCheck(node.id, !node.checked);
-      };
+      checkbox.onclick = (function(nodeId, currentChecked) {
+        return function(e) {
+          e.stopPropagation();
+          console.log('[TokenManager] Checkbox clicked for:', nodeId, 'new state:', !currentChecked);
+          toggleNodeCheck(nodeId, !currentChecked);
+        };
+      })(node.id, node.checked);
       div.appendChild(checkbox);
 
       if (node.type === 'variable') {
@@ -321,6 +335,7 @@
       container.appendChild(div);
 
       if (node.type === 'group' && !node.collapsed && node.children) {
+        console.log('[TokenManager] Rendering children for:', node.id, 'count:', node.children.length);
         for (var j = 0; j < node.children.length; j++) {
           renderNode(node.children[j], container);
         }
@@ -328,6 +343,7 @@
     }
 
     function toggleNodeCheck(nodeId, checked) {
+      console.log('[TokenManager] toggleNodeCheck:', nodeId, checked);
       currentTree = updateTreeNodeChecked(currentTree, nodeId, checked);
       renderTree();
       updateSwapButton();
@@ -355,7 +371,7 @@
           
           var updated = Object.assign({}, node, {
             children: updatedChildren,
-            checked: checkedCount === updatedChildren.length,
+            checked: checkedCount === updatedChildren.length && updatedChildren.length > 0,
             indeterminate: (checkedCount > 0 && checkedCount < updatedChildren.length) || indeterminateCount > 0
           });
           result.push(updated);
@@ -411,6 +427,7 @@
 
     function updateSwapButton() {
       var checkedIds = getCheckedVariableIds(currentTree);
+      console.log('[TokenManager] Checked variable IDs:', checkedIds.length);
       swapBtn.disabled = checkedIds.length === 0;
       swapBtn.textContent = checkedIds.length > 0 
         ? 'Swap Collection (' + checkedIds.length + ')'
@@ -419,6 +436,7 @@
 
     collectionSelect.onchange = function() {
       selectedCollectionId = collectionSelect.value;
+      console.log('[TokenManager] Collection changed:', selectedCollectionId);
       parent.postMessage({ 
         pluginMessage: { 
           type: 'select-collection', 
@@ -438,6 +456,7 @@
 
     swapBtn.onclick = function() {
       var checkedIds = getCheckedVariableIds(currentTree);
+      console.log('[TokenManager] Swap button clicked, IDs:', checkedIds);
       if (checkedIds.length === 0) return;
 
       var targetCollections = collections.filter(function(c) { 
@@ -461,12 +480,13 @@
       if (!choice) return;
 
       var index = parseInt(choice) - 1;
-      if (index < 0 || index >= targetCollections.length) {
+      if (index < 0 || index >= targetCollections.length || isNaN(index)) {
         alert('Неверный номер коллекции');
         return;
       }
 
       var targetCollectionId = targetCollections[index].id;
+      console.log('[TokenManager] Swapping to collection:', targetCollectionId);
       
       parent.postMessage({ 
         pluginMessage: { 
