@@ -177,6 +177,102 @@
     .tree-container::-webkit-scrollbar-thumb:hover {
       background: #999999;
     }
+
+    /* Modal styles */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-overlay.active {
+      display: flex;
+    }
+
+    .modal {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      max-width: 360px;
+      width: 90%;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+
+    .modal-header {
+      margin-bottom: 16px;
+    }
+
+    .modal-title {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .modal-description {
+      font-size: 11px;
+      color: #666;
+    }
+
+    .modal-body {
+      margin-bottom: 16px;
+    }
+
+    .collection-option {
+      padding: 10px;
+      border: 1px solid #e5e5e5;
+      border-radius: 4px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .collection-option:hover {
+      background: #f5f5f5;
+      border-color: #18a0fb;
+    }
+
+    .collection-option.selected {
+      background: #e3f2ff;
+      border-color: #18a0fb;
+    }
+
+    .collection-option-name {
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+
+    .collection-option-count {
+      font-size: 11px;
+      color: #666;
+    }
+
+    .modal-footer {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    .modal-footer button {
+      width: auto;
+      min-width: 80px;
+    }
+
+    .button-secondary {
+      background: #ffffff;
+      color: #333;
+      border: 1px solid #e5e5e5;
+    }
+
+    .button-secondary:hover {
+      background: #f5f5f5;
+    }
   </style>
 </head>
 <body>
@@ -203,16 +299,39 @@
     <button id="swap-btn" disabled>Swap Collection</button>
   </div>
 
+  <!-- Modal for collection selection -->
+  <div class="modal-overlay" id="modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title">Выберите целевую коллекцию</div>
+        <div class="modal-description" id="modal-description">Будет перенесено: 0 переменных</div>
+      </div>
+      <div class="modal-body" id="modal-body">
+        <!-- Collection options will be rendered here -->
+      </div>
+      <div class="modal-footer">
+        <button class="button-secondary" id="modal-cancel">Отмена</button>
+        <button id="modal-confirm" disabled>Перенести</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     var currentTree = [];
     var currentVariables = [];
     var collections = [];
     var selectedCollectionId = '';
+    var selectedTargetCollectionId = null;
 
     var collectionSelect = document.getElementById('collection-select');
     var searchInput = document.getElementById('search-input');
     var treeContainer = document.getElementById('tree-container');
     var swapBtn = document.getElementById('swap-btn');
+    var modalOverlay = document.getElementById('modal-overlay');
+    var modalBody = document.getElementById('modal-body');
+    var modalDescription = document.getElementById('modal-description');
+    var modalConfirm = document.getElementById('modal-confirm');
+    var modalCancel = document.getElementById('modal-cancel');
 
     console.log('[TokenManager] UI initialized');
 
@@ -249,6 +368,7 @@
 
         case 'success':
           alert(msg.message);
+          closeModal();
           break;
       }
     };
@@ -434,6 +554,64 @@
         : 'Swap Collection';
     }
 
+    function openModal() {
+      var checkedIds = getCheckedVariableIds(currentTree);
+      var targetCollections = collections.filter(function(c) { 
+        return c.id !== selectedCollectionId; 
+      });
+      
+      if (targetCollections.length === 0) {
+        alert('Нет других коллекций для переноса');
+        return;
+      }
+
+      modalDescription.textContent = 'Будет перенесено: ' + checkedIds.length + ' переменных';
+      
+      modalBody.innerHTML = targetCollections.map(function(c) {
+        return '<div class="collection-option" data-id="' + c.id + '">' +
+          '<div class="collection-option-name">' + c.name + '</div>' +
+          '<div class="collection-option-count">' + c.variableCount + ' переменных</div>' +
+          '</div>';
+      }).join('');
+
+      var options = document.querySelectorAll('.collection-option');
+      for (var i = 0; i < options.length; i++) {
+        options[i].onclick = function() {
+          var allOptions = document.querySelectorAll('.collection-option');
+          for (var j = 0; j < allOptions.length; j++) {
+            allOptions[j].classList.remove('selected');
+          }
+          this.classList.add('selected');
+          selectedTargetCollectionId = this.getAttribute('data-id');
+          modalConfirm.disabled = false;
+        };
+      }
+
+      modalOverlay.classList.add('active');
+      selectedTargetCollectionId = null;
+      modalConfirm.disabled = true;
+    }
+
+    function closeModal() {
+      modalOverlay.classList.remove('active');
+      selectedTargetCollectionId = null;
+    }
+
+    function confirmSwap() {
+      if (!selectedTargetCollectionId) return;
+      
+      var checkedIds = getCheckedVariableIds(currentTree);
+      console.log('[TokenManager] Swapping to collection:', selectedTargetCollectionId);
+      
+      parent.postMessage({ 
+        pluginMessage: { 
+          type: 'swap-collection',
+          variableIds: checkedIds,
+          targetCollectionId: selectedTargetCollectionId
+        } 
+      }, '*');
+    }
+
     collectionSelect.onchange = function() {
       selectedCollectionId = collectionSelect.value;
       console.log('[TokenManager] Collection changed:', selectedCollectionId);
@@ -458,43 +636,16 @@
       var checkedIds = getCheckedVariableIds(currentTree);
       console.log('[TokenManager] Swap button clicked, IDs:', checkedIds);
       if (checkedIds.length === 0) return;
+      openModal();
+    };
 
-      var targetCollections = collections.filter(function(c) { 
-        return c.id !== selectedCollectionId; 
-      });
-      
-      if (targetCollections.length === 0) {
-        alert('Нет других коллекций для переноса');
-        return;
+    modalCancel.onclick = closeModal;
+    modalConfirm.onclick = confirmSwap;
+
+    modalOverlay.onclick = function(e) {
+      if (e.target === modalOverlay) {
+        closeModal();
       }
-
-      var options = targetCollections.map(function(c, i) {
-        return (i + 1) + '. ' + c.name + ' (' + c.variableCount + ' переменных)';
-      }).join('\n');
-
-      var choice = prompt(
-        'Выберите коллекцию для переноса (введите номер):\n' + options,
-        '1'
-      );
-
-      if (!choice) return;
-
-      var index = parseInt(choice) - 1;
-      if (index < 0 || index >= targetCollections.length || isNaN(index)) {
-        alert('Неверный номер коллекции');
-        return;
-      }
-
-      var targetCollectionId = targetCollections[index].id;
-      console.log('[TokenManager] Swapping to collection:', targetCollectionId);
-      
-      parent.postMessage({ 
-        pluginMessage: { 
-          type: 'swap-collection',
-          variableIds: checkedIds,
-          targetCollectionId: targetCollectionId
-        } 
-      }, '*');
     };
   </script>
 </body>
