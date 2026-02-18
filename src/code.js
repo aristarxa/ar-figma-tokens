@@ -161,7 +161,10 @@ function getCollections() {
       return {
         id: collection.id,
         name: collection.name,
-        variableCount: collection.variableIds.length
+        variableCount: collection.variableIds.length,
+        modes: collection.modes.map(function(mode) {
+          return { modeId: mode.modeId, name: mode.name };
+        })
       };
     });
   });
@@ -209,46 +212,125 @@ function getVariablesByCollection(collectionId) {
   });
 }
 
-function swapVariableCollection(variableId, targetCollectionId) {
-  return figma.variables.getVariableByIdAsync(variableId).then(function(variable) {
+function validateModeCompatibility(sourceCollection, targetCollection) {
+  var sourceModes = sourceCollection.modes;
+  var targetModes = targetCollection.modes;
+
+  console.log('[Plugin] Validating modes compatibility');
+  console.log('[Plugin] Source modes:', sourceModes.length, ':', sourceModes.map(function(m) { return m.name; }).join(', '));
+  console.log('[Plugin] Target modes:', targetModes.length, ':', targetModes.map(function(m) { return m.name; }).join(', '));
+
+  // Проверка: количество modes должно совпадать
+  if (sourceModes.length !== targetModes.length) {
+    return {
+      compatible: false,
+      error: 'Количество modes не совпадает: исходная коллекция имеет ' + sourceModes.length + 
+             ' mode(s), целевая коллекция имеет ' + targetModes.length + ' mode(s)'
+    };
+  }
+
+  // Проверка: имена modes должны совпадать (порядок важен)
+  for (var i = 0; i < sourceModes.length; i++) {
+    if (sourceModes[i].name !== targetModes[i].name) {
+      return {
+        compatible: false,
+        error: 'Mode #' + (i + 1) + ' не совпадает: "' + sourceModes[i].name + '" != "' + targetModes[i].name + '"'
+      };
+    }
+  }
+
+  // Создаем mapping между source и target mode IDs
+  var modeMapping = {};
+  for (var i = 0; i < sourceModes.length; i++) {
+    modeMapping[sourceModes[i].modeId] = targetModes[i].modeId;
+  }
+
+  return {
+    compatible: true,
+    modeMapping: modeMapping
+  };
+}
+
+function swapVariableCollection(variableId, sourceCollectionId, targetCollectionId) {
+  return Promise.all([
+    figma.variables.getVariableByIdAsync(variableId),
+    figma.variables.getVariableCollectionByIdAsync(sourceCollectionId),
+    figma.variables.getVariableCollectionByIdAsync(targetCollectionId)
+  ]).then(function(results) {
+    var variable = results[0];
+    var sourceCollection = results[1];
+    var targetCollection = results[2];
+
     if (!variable) {
-      throw new Error('Переменная ' + variableId + ' не найдена');
+      throw new Error('Переменная не найдена');
     }
 
-    return figma.variables.getVariableCollectionByIdAsync(targetCollectionId).then(function(targetCollection) {
-      if (!targetCollection) {
-        throw new Error('Коллекция ' + targetCollectionId + ' не найдена');
+    if (!sourceCollection) {
+      throw new Error('Исходная коллекция не найдена');
+    }
+
+    if (!targetCollection) {
+      throw new Error('Целевая коллекция не найдена');
+    }
+
+    console.log('[Plugin] Swapping variable:', variable.name);
+    console.log('[Plugin] From:', sourceCollection.name);
+    console.log('[Plugin] To:', targetCollection.name);
+
+    // Валидация совместимости modes
+    var validation = validateModeCompatibility(sourceCollection, targetCollection);
+    if (!validation.compatible) {
+      throw new Error('Несовместимые modes: ' + validation.error);
+    }
+
+    console.log('[Plugin] Modes compatible, proceeding with transfer');
+
+    return getVariablesByCollection(targetCollectionId).then(function(existingVars) {
+      // Проверка дубликатов
+      var duplicate = existingVars.find(function(v) { return v.name === variable.name; });
+      if (duplicate) {
+        throw new Error('Переменная "' + variable.name + '" уже существует в коллекции "' + targetCollection.name + '"');
       }
 
-      return getVariablesByCollection(targetCollectionId).then(function(existingVars) {
-        var duplicate = existingVars.find(function(v) { return v.name === variable.name; });
+      // Создаем новую переменную
+      var newVariable = figma.variables.createVariable(
+        variable.name,
+        targetCollectionId,
+        variable.resolvedType
+      );
 
-        if (duplicate) {
-          throw new Error('Переменная "' + variable.name + '" уже существует в коллекции "' + targetCollection.name + '"');
+      console.log('[Plugin] Created new variable:', newVariable.name);
+
+      // Переносим значения из ВСЕХ modes
+      var modeMapping = validation.modeMapping;
+      var sourceModeIds = Object.keys(variable.valuesByMode);
+      
+      console.log('[Plugin] Transferring values for', sourceModeIds.length, 'modes');
+      
+      for (var i = 0; i < sourceModeIds.length; i++) {
+        var sourceModeId = sourceModeIds[i];
+        var targetModeId = modeMapping[sourceModeId];
+        var value = variable.valuesByMode[sourceModeId];
+
+        if (targetModeId) {
+          console.log('[Plugin] Setting value for mode:', sourceModeId, '->', targetModeId);
+          newVariable.setValueForMode(targetModeId, value);
+        } else {
+          console.warn('[Plugin] No mapping found for source mode:', sourceModeId);
         }
+      }
 
-        var newVariable = figma.variables.createVariable(
-          variable.name,
-          targetCollectionId,
-          variable.resolvedType
-        );
+      console.log('[Plugin] All values transferred, removing old variable');
 
-        var sourceModes = variable.valuesByMode;
-        var targetModes = targetCollection.modes;
-        var targetModeId = targetModes[0].modeId;
-        var sourceValues = Object.values(sourceModes);
-
-        if (sourceValues.length > 0) {
-          newVariable.setValueForMode(targetModeId, sourceValues[0]);
-        }
-
-        variable.remove();
-      });
+      // Удаляем старую переменную
+      variable.remove();
+      
+      return { success: true, variableName: variable.name };
     });
   });
 }
 
-function batchSwapVariables(variableIds, targetCollectionId) {
+function batchSwapVariables(variableIds, sourceCollectionId, targetCollectionId) {
   var results = {
     success: [],
     failed: []
@@ -260,15 +342,20 @@ function batchSwapVariables(variableIds, targetCollectionId) {
     }
 
     var varId = variableIds[index];
-    return swapVariableCollection(varId, targetCollectionId)
-      .then(function() {
-        results.success.push(varId);
+    return swapVariableCollection(varId, sourceCollectionId, targetCollectionId)
+      .then(function(result) {
+        results.success.push({
+          id: varId,
+          name: result.variableName
+        });
         return processNext(index + 1);
       })
       .catch(function(error) {
+        var errorMsg = error instanceof Error ? error.message : 'Неизвестная ошибка';
+        console.error('[Plugin] Error swapping variable:', varId, errorMsg);
         results.failed.push({
           id: varId,
-          error: error instanceof Error ? error.message : 'Неизвестная ошибка'
+          error: errorMsg
         });
         return processNext(index + 1);
       });
@@ -377,15 +464,27 @@ figma.ui.onmessage = function(msg) {
         return;
       }
 
-      batchSwapVariables(msg.variableIds, msg.targetCollectionId)
+      console.log('[Plugin] Starting batch swap:', msg.variableIds.length, 'variables');
+      console.log('[Plugin] From collection:', currentCollectionId);
+      console.log('[Plugin] To collection:', msg.targetCollectionId);
+
+      batchSwapVariables(msg.variableIds, currentCollectionId, msg.targetCollectionId)
         .then(function(results) {
+          console.log('[Plugin] Batch swap completed');
+          console.log('[Plugin] Success:', results.success.length);
+          console.log('[Plugin] Failed:', results.failed.length);
+
           if (results.failed.length > 0) {
-            var errorMessages = results.failed.map(function(f) { return f.error; }).join('\n');
-            figma.notify('Ошибки при переносе:\n' + errorMessages, { error: true });
+            var errorMessages = results.failed.map(function(f) { 
+              return '• ' + f.error; 
+            }).join('\n');
+            figma.notify('Ошибки при переносе:\n' + errorMessages, { error: true, timeout: 5000 });
           }
 
           if (results.success.length > 0) {
-            figma.notify('Успешно перенесено: ' + results.success.length + ' переменных');
+            var successNames = results.success.map(function(s) { return s.name; }).join(', ');
+            figma.notify('Успешно перенесено ' + results.success.length + ' переменных', { timeout: 3000 });
+            console.log('[Plugin] Successfully transferred:', successNames);
             return loadCollectionVariables(currentCollectionId);
           }
         })
